@@ -1,12 +1,19 @@
 package com.ciberspring.portal.hr.controller;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.util.Map;
+
 import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
 import org.springframework.security.oauth2.core.oidc.user.OidcUser;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseBody;
 
 import com.ciberspring.portal.hr.service.impl.AllEmployeesLeaveBalanceService;
@@ -26,12 +33,13 @@ public class ClientController {
 	private final AllEmployeesLeaveBalanceService allEmployeesLeaveBalanceService;
 	private final ObjectMapper objectMapper;
 
-	public ClientController(EmployeeClientService employeeClientService, LeavesClientService leavesClientService,AllEmployeesLeaveBalanceService allEmployeesLeaveBalanceService,
+	public ClientController(EmployeeClientService employeeClientService, LeavesClientService leavesClientService,
+			AllEmployeesLeaveBalanceService allEmployeesLeaveBalanceService,
 			MyLeavesClientService myLeavesClientService, ObjectMapper objectMapper) {
 		this.employeeClientService = employeeClientService;
 		this.leavesClientService = leavesClientService;
 		this.myLeavesClientService = myLeavesClientService;
-		this.allEmployeesLeaveBalanceService=allEmployeesLeaveBalanceService;
+		this.allEmployeesLeaveBalanceService = allEmployeesLeaveBalanceService;
 		this.objectMapper = objectMapper;
 	}
 
@@ -43,6 +51,11 @@ public class ClientController {
 	@GetMapping("/localholidaylist")
 	public String getAllLeaves() {
 		return "localholidaylist";
+	}
+
+	@GetMapping("/add-employee")
+	public String showAddEmployeeForm() {
+		return "add-employee";
 	}
 
 	@GetMapping("/employees/json")
@@ -126,16 +139,122 @@ public class ClientController {
 			return "{\"error\": \"Failed to fetch leave balances: " + e.getMessage() + "\"}";
 		}
 	}
+
 	@GetMapping("/AllLeaveBalance")
 	public String getAllEmployeesLeaves() {
 		return "allEmployeesLeave";
 	}
-	
+
 	@GetMapping("/AllLeaveBalance/json")
 	@ResponseBody
 	public String getAllEmployeesLeavesJson(OAuth2AuthenticationToken authentication) {
-	    return allEmployeesLeaveBalanceService.getEmployeesLeaveBalance(authentication);
+		return allEmployeesLeaveBalanceService.getEmployeesLeaveBalance(authentication);
 	}
 
+	/**
+	 * Handle Google Places API address predictions
+	 */
+	@GetMapping("/address/predictions")
+	@ResponseBody
+	public String getAddressPredictions(@RequestParam String input, OAuth2AuthenticationToken authentication) {
+		try {
+			// You can add authentication checks here if needed
+			return employeeClientService.getAddressPredictions(input, authentication);
+		} catch (Exception e) {
+			e.printStackTrace();
+			return "{\"error\": \"Failed to fetch address predictions: " + e.getMessage() + "\"}";
+		}
+	}
+
+	/**
+	 * Handle Google Places API address details
+	 */
+	@GetMapping("/address/details")
+	@ResponseBody
+	public String getAddressDetails(@RequestParam String placeId, OAuth2AuthenticationToken authentication) {
+		try {
+			return employeeClientService.getAddressDetails(placeId, authentication);
+		} catch (Exception e) {
+			e.printStackTrace();
+			return "{\"error\": \"Failed to fetch address details: " + e.getMessage() + "\"}";
+		}
+	}
+
+	@PostMapping("/employees/create")
+	@ResponseBody
+	public String createEmployee(@RequestBody Map<String, String> employeeData,
+			OAuth2AuthenticationToken authentication) {
+		try {
+			System.out.println("=== CREATE EMPLOYEE DEBUG ===");
+			System.out.println("Employee Data: " + employeeData);
+			System.out.println("Authentication: " + (authentication != null ? "Present" : "Null"));
+			
+			if (authentication != null) {
+				System.out.println("User: " + authentication.getName());
+				System.out.println("Authorities: " + authentication.getAuthorities());
+			}
+			System.out.println("=== END DEBUG ===");
+			
+			return employeeClientService.createEmployee(employeeData, authentication);
+		} catch (Exception e) {
+			e.printStackTrace();
+			return "{\"error\": \"Failed to create employee: " + e.getMessage() + "\"}";
+		}
+	}
+	
+	@GetMapping("/personal-details")
+	public String redirectToPersonalDetails(OAuth2AuthenticationToken authentication) {
+	    try {
+	        // Get the logged-in user's email from Okta
+	        OidcUser user = (OidcUser) authentication.getPrincipal();
+	        String email = user.getEmail();
+	        
+	        if (email == null || email.isEmpty()) {
+	            throw new RuntimeException("Email not found in user token");
+	        }
+
+	        // Get access token
+	        String accessToken = employeeClientService.getUserAccessToken(authentication);
+	        
+	        System.out.println("=== PERSONAL DETAILS REDIRECT ===");
+	        System.out.println("User Email: " + email);
+	        System.out.println("Access Token available: " + (accessToken != null));
+	        System.out.println("=== END DEBUG ===");
+	        
+	        if (accessToken == null) {
+	            throw new RuntimeException("Access token not available");
+	        }
+
+	        // URL encode both email and token
+	        String encodedEmail = URLEncoder.encode(email, StandardCharsets.UTF_8);
+	        String encodedToken = URLEncoder.encode(accessToken, StandardCharsets.UTF_8);
+	        
+	        // Redirect with both email and token parameters
+	        return "redirect:http://localhost:8083/personal-details?email=" + encodedEmail + "&token=" + encodedToken;
+	        
+	    } catch (Exception e) {
+	        e.printStackTrace();
+	        return "redirect:/home?error=Failed to access personal details: " + e.getMessage();
+	    }
+	}
+
+	@GetMapping("/personal-details-with-token")
+	public String personalDetailsWithToken(OAuth2AuthenticationToken authentication, Model model) {
+	    try {
+	        OidcUser user = (OidcUser) authentication.getPrincipal();
+	        String email = user.getEmail();
+	        String accessToken = employeeClientService.getUserAccessToken(authentication);
+	        
+	        model.addAttribute("accessToken", accessToken);
+	        model.addAttribute("userEmail", email);
+	        model.addAttribute("targetUrl", "http://localhost:8083/personal-details");
+	        
+	        return "token-redirect";
+	        
+	    } catch (Exception e) {
+	        e.printStackTrace();
+	        return "redirect:/home?error=Failed to access personal details: " + e.getMessage();
+	    }
+	}
 
 }
